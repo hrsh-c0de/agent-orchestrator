@@ -1,0 +1,85 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: agent-orchestrator:latest
+    command:
+      - uvicorn
+      - app:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --workers
+      - "1"
+    ports:
+      - "8000:8000"
+    environment:
+      LLM_PROVIDER: ${LLM_PROVIDER:-offline}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      DEFAULT_AUTO_APPROVE: ${DEFAULT_AUTO_APPROVE:-false}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      CRM_DB_PATH: /app/data/crm.db
+      CORS_ORIGINS: http://localhost:8501,http://127.0.0.1:8501
+      # Durable state: approvals and run history survive container restarts.
+      CHECKPOINT_BACKEND: ${CHECKPOINT_BACKEND:-sqlite}
+      CHECKPOINT_DB_PATH: /app/data/checkpoints.db
+      RUN_STORE_BACKEND: ${RUN_STORE_BACKEND:-sqlite}
+      RUN_DB_PATH: /app/data/runs.db
+      # Bearer auth for /run, /approve and /runs. Leave API_KEYS empty only
+      # for local demos; with auth on and no keys the API fails closed.
+      API_AUTH_ENABLED: ${API_AUTH_ENABLED:-false}
+      API_KEYS: ${API_KEYS:-}
+    volumes:
+      - crm-data:/app/data
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: agent-orchestrator:latest
+    command:
+      - streamlit
+      - run
+      - dashboard.py
+      - --server.address=0.0.0.0
+      - --server.port=8501
+      - --server.headless=true
+      - --browser.gatherUsageStats=false
+    ports:
+      - "8501:8501"
+    environment:
+      API_URL: http://api:8000
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Optional: pre-fill the dashboard's API key field when auth is enabled.
+      API_KEY: ${API_KEYS:-}
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health', timeout=3)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+
+volumes:
+  crm-data:
